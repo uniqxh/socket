@@ -1,5 +1,6 @@
 #include<sys/types.h>
 #include<unistd.h>
+#include<sys/mman.h>
 #include<sys/socket.h>
 #include<sys/epoll.h>
 #include<arpa/inet.h>
@@ -13,6 +14,19 @@ int setnonblocking(int fd){
 	if(fcntl(fd, F_SETFL, fcntl(fd, F_GETFD, 0) | O_NONBLOCK) == -1){
 		return -1;
 	}
+	return 0;
+}
+int writeWeb(int fd){
+	char buf[2048];
+	char str[] = "<html><title>myTiny web server</title><body><h2>hello, world!welcome to myTiny web server!</h2></body></html>";
+	int len = strlen(str);
+	sprintf(buf, "HTTP/1.1 200 OK\r\n");
+	sprintf(buf, "%sServer: myTiny Web Server\r\n", buf);
+	sprintf(buf, "%sContent-length: %d\r\n", buf, len);
+	sprintf(buf, "%sContent-type: text/html; charset=utf-8\r\n\r\n%s", buf, str);
+
+	write(fd, buf, sizeof(buf));
+	puts(buf);
 	return 0;
 }
 int main(){
@@ -89,6 +103,7 @@ int main(){
 					exit(0);
 				}
 				printf("new accept client %d\n", newfd);
+				writeWeb(newfd);
 				event.data.fd = newfd;
 				event.events = EPOLLIN | EPOLLET;
 				if(epoll_ctl(efd, EPOLL_CTL_ADD, newfd, &event) < 0){
