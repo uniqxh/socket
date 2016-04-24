@@ -1,4 +1,5 @@
 #include<sys/types.h>
+#include<ctype.h>
 #include<unistd.h>
 #include<sys/stat.h>
 #include<sys/mman.h>
@@ -20,6 +21,13 @@ void getFileType(char* fileType, char* fileName){
 	else if(strstr(fileName, ".ico")) strcpy(fileType, "image/x-icon");
 	else strcpy(fileType, "text/plain");
 }
+void toUpper(char* s){
+	char* d = s;
+	while(*d != '\0'){
+		*d = toupper(*d);
+		++d;
+	}
+}
 int writen(int fd,void* buf, size_t n){
 	size_t l = n;
 	size_t w;
@@ -40,39 +48,74 @@ int setnonblocking(int fd){
 	}
 	return 0;
 }
-int writeWeb(int fd, char* u){
-	struct stat sb;
-	size_t len = 0;
-	if(stat(u, &sb) >= 0) len = sb.st_size;
+int responseSuccess(int fd, int len, char* u){
 	char fileType[20];
 	getFileType(fileType, u);
 	char buf[2048] = {0};
 	sprintf(buf, "HTTP/1.1 200 OK\r\n");
 	sprintf(buf, "%sServer: myTiny Web Server\r\n", buf);
-	sprintf(buf, "%sContent-length: %lu\r\n", buf, len);
+	sprintf(buf, "%sContent-length: %d\r\n", buf, len);
 	sprintf(buf, "%sContent-type: %s;charset=utf-8\r\n\r\n",buf, fileType);
 	writen(fd, buf, strlen(buf));
-	printf("[%s]head length: %lu, body length: %lu\n", u, strlen(buf), len);
-	int ffd = open(u, O_RDONLY, 0);
-	if(ffd < 0){
-		printf("file %s not found\n", u);
+	printf("[%s]head length: %lu, body length: %d\n", u, strlen(buf), len);
+	return 0;
+}
+int responseFail(int fd){
+	char buf[2048] = {0};
+	sprintf(buf, "HTTP/1.1 404 NOT found\r\n");
+	sprintf(buf, "%sServer: myTiny Web Server\r\n", buf);
+	sprintf(buf, "%sContent-length: 0\r\n", buf);
+	sprintf(buf, "%sContent-type: text/html;charset=utf-8\r\n\r\n",buf);
+	writen(fd, buf, strlen(buf));
+	return 0;
+}
+int compute(int fd, char* u, char* d){
+	int a=0,b=0;
+	char data[1024]={0};
+	if(d != NULL) sscanf(d, "a=%d&b=%d", &a, &b);
+	toUpper(u);
+	if(strcmp(u, "/ADD") == 0) sprintf(data, "%d + %d = %d\n", a, b, a+b);
+	else if(strcmp(u, "/SUB") == 0) sprintf(data, "%d - %d = %d\n", a, b, a-b);
+	else if(strcmp(u, "/MUL") == 0) sprintf(data, "%d * %d = %d\n", a, b, a*b);
+	else if(strcmp(u, "/DIV") == 0) sprintf(data, "%d / %d = %d\n", a, b, a/b);
+	else{
+		responseFail(fd);
 		return -1;
 	}
+	responseSuccess(fd, strlen(data), u);
+	writen(fd, data, strlen(data));
+	return 0;
+}
+int writeWeb(int fd, char* u, char* d){
+	struct stat sb;
+	size_t len = 0;
+	if(stat(u, &sb) >= 0) len = sb.st_size;
+	int ffd = open(u, O_RDONLY, 0);
+	if(ffd < 0){
+		compute(fd, u, d);
+		return -1;
+	}
+	responseSuccess(fd, len, u);
 	char* mp = mmap(0, len, PROT_READ, MAP_PRIVATE, ffd, 0);
 	close(ffd);
 	writen(fd, mp, len);
 	munmap(mp, len);
 	return 0;
 }
-int parseUrl(int fd, char* m, char* u, char* v){
+int parseUrl(int fd, char* m, char* u, char* v, char* d){
 	if(strcmp(m,"GET") == 0){
-		if(strcmp(u, "/") == 0) sprintf(u, "%sindex.html", u);
-		sscanf(u, "/%s", u);
-		writeWeb(fd, u);
+		if(strcmp(u, "/") == 0){
+			sprintf(u, "%sindex.html", u);
+			sscanf(u, "/%s", u);
+		}
+		printf("GET [%s]\n", u);
+		writeWeb(fd, u, d);
 	}else if(strcmp(m, "POST") == 0){
-		printf("POST response:\n");
+		printf("POST [%s]\n", u);
+		compute(fd, u, d);
 	}else{
 		printf("unknown method\n");
+		responseFail(fd);
 	}
 	return 0;
 }
@@ -134,7 +177,8 @@ int main(){
 			continue;
 		}
 		for(i = 0; i<cnt; ++i){
-			if(ev[i].data.fd == sfd){
+			fd = ev[i].data.fd;
+			if(fd == sfd){
 				newfd = accept(sfd, (struct sockaddr*)&clientaddr, &len);
 				if(newfd < 0){
 					perror("accept");
@@ -159,16 +203,28 @@ int main(){
 				cfd ++;
 				continue;
 			}
-			ret = read(ev[i].data.fd, buf, sizeof(buf));
+			memset(buf, 0, sizeof(buf));
+			ret = read(fd, buf, sizeof(buf));
 			if(ret <= 0){
-				close(ev[i].data.fd);
-				epoll_ctl(efd, EPOLL_CTL_DEL, ev[i].data.fd, &event);
+				close(fd);
+				epoll_ctl(efd, EPOLL_CTL_DEL, fd, &event);
 				cfd --;
 			}else{
-				char m[10], u[100], v[20];
+				char m[10], u[100], v[20], d[1024], *p;
 				sscanf(buf,"%s %s %s", m, u, v);
-				printf("%s %s %s\n\r", m, u, v);
-				parseUrl(ev[i].data.fd, m, u, v);
+				if(strcmp(m, "POST") == 0){
+					p = strstr(buf, "\n\r\n");
+					if(p == NULL) p = buf + strlen(buf);
+					else p += 3;
+				}else if(strcmp(m, "GET") == 0){
+					p = strstr(u, "?");
+					if(p == NULL) p = u + strlen(u);
+					else {
+						*p = '\0';
+						p += 1;
+					}
+				}
+				parseUrl(fd, m, u, v, p);
 			}
 		}
 	}
