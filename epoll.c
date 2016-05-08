@@ -1,4 +1,5 @@
 #include<sys/types.h>
+#include<pthread.h>
 #include<ctype.h>
 #include<unistd.h>
 #include<sys/stat.h>
@@ -13,6 +14,7 @@
 #include<stdlib.h>
 #include<string.h>
 #define maxevent 10000
+extern char **environ;
 void getFileType(char* fileType, char* fileName){
 	if(strstr(fileName, ".html")) strcpy(fileType, "text/html");
 	else if(strstr(fileName, ".gif")) strcpy(fileType, "image/gif");
@@ -62,10 +64,11 @@ int responseSuccess(int fd, int len, char* u){
 }
 int responseFail(int fd){
 	char buf[2048] = {0};
+	char *content = "<h1>HTTP/1.1 404 NOT found</h1>";
 	sprintf(buf, "HTTP/1.1 404 NOT found\r\n");
 	sprintf(buf, "%sServer: myTiny Web Server\r\n", buf);
-	sprintf(buf, "%sContent-length: 0\r\n", buf);
-	sprintf(buf, "%sContent-type: text/html;charset=utf-8\r\n\r\n",buf);
+	sprintf(buf, "%sContent-length: %lu\r\n", buf, strlen(content));
+	sprintf(buf, "%sContent-type: text/html;charset=utf-8\r\n\r\n%s",buf, content);
 	writen(fd, buf, strlen(buf));
 	return 0;
 }
@@ -102,8 +105,29 @@ int writeWeb(int fd, char* u, char* d){
 	munmap(mp, len);
 	return 0;
 }
+void dynamic(int fd, char* filename, char* args){
+	int pid;
+	if(pid = fork()){
+		setenv("QUERY_STRING", args, 1);
+		if(dup2(fd, STDOUT_FILENO) < 0){
+			perror("dup2");
+		}
+		char *emptyList[] = { NULL };
+		if(execve(filename, emptyList, environ) < 0){ //environ
+			perror("execve");
+		}
+	}else if(pid < 0){
+		responseFail(fd);
+	}
+}
 int parseUrl(int fd, char* m, char* u, char* v, char* d){
-	if(strcmp(m,"GET") == 0){
+	if(strstr(u, "cgi-bin")){
+		printf("url: %s\ndata: %s\n", u, d);
+		int i = 0;
+		if(*u == '/') ++i;
+		dynamic(fd, u+i, d);
+	}
+	else if(strcmp(m,"GET") == 0){
 		if(strcmp(u, "/") == 0){
 			sprintf(u, "%sindex.html", u);
 			sscanf(u, "/%s", u);

@@ -1,0 +1,36 @@
+<html>
+	<head>
+		<title>welcome to myTiny web server</title>
+		<script src="http://code.jquery.com/jquery-latest.js"></script>
+	</head>
+	<body>
+		url: <input type="text" id="urlId" value="http://localhost:8888" />
+		acion:
+		<select id="actionId">
+			<option value="GET" selected=true>GET</option>
+			<option value="POST"> POST</option>
+		</select>
+		data: <input type="text" id="dataId" />
+		<input type="button" value="test" onclick="javascript:send();" />
+		<form method="post" action="/cgi-bin/getInfo">
+			username: <input type="text" name="username" id="nameId" value="xxxxxx" />
+			password: <input type="text" name="password" id="pwdId" value="oooooo" />
+			<input type="submit" value="submit" />
+		</form>
+	</body>
+	<script type="text/javascript">
+function send(){
+	var url = $("#urlId").val();
+	var action = $("#actionId").val();
+	var data = $("#dataId").val();
+	$.ajax({
+		url:url,
+		type:action,
+		data:data, 
+		dataType: 'text',
+		success:function(d){
+		alert(d);
+	}});
+}
+	</script>
+</html>
